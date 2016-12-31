@@ -1,0 +1,2031 @@
+<html><head><title>x80</title>
+<meta http-equiv="refresh" content="500" />
+<style>
+body {
+	background-color: black;
+	color		: lightgreen;
+	padding		: 0 0 0 0;
+	margin		: 0 0 0 0;
+}
+table {
+	border		: none;
+	font-family	: Courier New;
+	font-size	: 11px;
+}
+td {
+	border-top	: none;
+	border-left	: none;
+	border-right	: thin green solid;
+	border-bottom	: thin green solid;
+}
+button {
+	font-size	: 10px; width: 4em;
+}
+pre {
+	margin		: 0px 0px 0px 0px;
+}
+textarea {
+	margin		: 0px 0px 0px 0px;
+	font-family	: Courier New;
+	font-size	: 10px;
+}
+pre#Screen {
+	margin		: 0px 0px 0px 0px;
+	font-family	: Courier New;
+	font-size	: 10px;
+	//border		: thick grey inset;
+}
+pre#commands {
+	cursor		: default;
+}
+var {
+	display		: none;
+}
+span.prefix {
+	cursor		: pointer;
+}
+span.prefix:hover {
+	color		: yellow;
+	font-weight	: bolder;
+}
+</style>
+<script>
+/*****************************************************************************
+BP:
+SI:Seek Immediate
+DI:Data Immediate
+SP:
+BX:
+CX:
+DX:
+
+0000 83 12 34 56|DB  12h,34h,56h
+0004 AA         |ADD AL,12h
+0005 A5         |MOV CL,34h
+0006 BE         |JE  $+56h
+*****************************************************************************/
+Number.prototype.Hex = function(n) {return ("0000000" + this.toString(16).toUpperCase()).substr(-n);}
+Number.prototype.hi = function() {return (this >> 8) & 255; }
+Number.prototype.lo = function() {return this & 255; }
+Number.prototype.xxxx = function(n) {
+	var	a = Math.floor(n / 1) % 10,
+		b = Math.floor(n / 10) % 10,
+		c = Math.floor(n / 100) % 10,
+		d = Math.floor(n / 1000) % 10;
+	return a + b * 16 + c * 256 + d * 4096;
+}
+String.prototype.Mul = function(n, j) {var s = this, buf = ""; while(n > 0) { if(n&1) buf+=s; s+=(j?j:"")+s; n >>= 1; } return buf; }
+Array.prototype.Dump = function(a, n) {var s = []; while(n --) s.push(this[a ++ & 0xFFFF].Hex(2)); return s.join(" "); }
+
+var
+	AudioAPI = 0,
+	AudioScript = 0,
+	AudioStream = [],
+	AudioAPIscript = 0,
+	amp = [],
+	osc = [];
+var	noteFreq = [	//	freq = 2 ** (n / 12) * 440
+		16.352, 17.324, 18.354, 19.445, 20.602, 21.827, 23.125, 24.500, 25.957, 27.500, 29.135, 30.868,
+		32.703, 34.648, 36.708, 38.891, 41.203, 43.654, 46.249, 48.999, 51.913, 55.000, 58.270, 61.735,
+		65.406, 69.296, 73.416, 77.782, 82.406, 87.307, 92.499, 97.999, 103.83, 110.00, 116.54, 123.47,
+		130.81, 138.59, 146.83, 155.56, 164.81, 174.81, 185.00, 196.00, 207.65, 220.00, 233.08, 246.84,
+		261.63, 277.18, 293.67, 311.13, 329.63, 349.23, 369.99, 392.00, 415.30, 440.00, 466.16, 493.88,	//	#1
+		523.25, 554.37, 587.33, 622.25, 659.26, 698.46, 739.99, 783.99, 830.61, 880.00, 932.33, 987.77,	//	#2
+		1046.5, 1108.7, 1174.7, 1244.5, 1318.5, 1396.9, 1480.0, 1568.0, 1661.2, 1760.0, 1864.7, 1975.5,	//	#3
+		2093.0, 2217.5, 2349.3, 2489.0, 2637.0, 2793.8, 2960.0, 3136.0, 3322.4, 3520.0, 3729.3, 3951.1,	//	#4
+		4186.0, 4434.9, 4698.6, 4978.0, 5274.0, 5587.7, 5919.9, 6271.9, 6644.9, 7040.0, 7458.6, 7902.1,	//	#5
+		8372.0, 8869.8, 9397.3, 9956.1, 10548 , 11175 , 11840 , 12544 , 13290 , 14080 , 14917 , 15804	//	#6
+	];
+function AudioCallBack(e) {
+	try {
+		var	i;
+		var input = e.inputBuffer.getChannelData(0);
+		var output = e.outputBuffer.getChannelData(0);
+		var	frq = cpu.ios[0xA0];
+		var	evl = 0;
+		var	dur = 0;
+		dur = AudioStream.length > 0 ? AudioStream[0] : 0;
+		try {
+			for(i = 0; i < input.length; ++ i) {
+				output[i] = dur > 0 ? 255 : 0;
+				if(dur > 0)
+					dur --;
+				if(dur < 0)
+					dur ++;
+				if(dur == 0 && AudioStream.length > 0) {
+					dur = AudioStream.shift();
+				}
+			}
+			if(dur != 0)
+				AudioStream[0] = dur;
+		} catch(e) {
+			while(i < input.length)
+				output[i ++] = (Math.random() % 255 - 128) / 128;
+		}
+	} catch (e) {
+		//window.status = e.message;
+	}
+}
+//
+function AudioInit() {
+	try {
+		AudioAPI = new AudioContext();
+	} catch(err) {
+		AudioAPI = 0;
+		return;
+	}
+	//AudioAPIanalyser = AudioAPI.createAnalyser();
+	//AudioAPIanalyser.connect(AudioAPI.destination);
+	AudioAPIfilter = AudioAPI.createBiquadFilter(); 
+	AudioAPIfilter.type = 1; // High-pass filter (Тип фильтра)
+	AudioAPIfilter.frequency.value = 96000; // Cutoff to 1kHZ (Базовая частота)
+	AudioAPIfilter.frequency.Q = 1.1; // Quality factor (Добротность)
+	AudioAPIfilter.connect(AudioAPI.destination);//(AudioAPIanalyser);
+	(amp[0] = AudioAPI.createGain()).connect(AudioAPIfilter); /*amp[0].connect(anl)*/; amp[0].gain.value = 1.0;
+	(osc[0] = AudioAPI.createOscillator()).connect(amp[0]); osc[0].frequency.value = 1;
+	try {
+		osc[0].noteOn(0);
+	} catch(err) {
+		osc[0].start(0);
+	}
+/*	if(!AudioAPI.createScriptProcessor)
+		AudioAPIscript = AudioAPI.createJavaScriptNode(1 << 10, 1, 1);
+	else
+		AudioAPIscript = AudioAPI.createScriptProcessor(1 << 10, 1, 1);
+	AudioAPIscript.onaudioprocess = AudioCallBack;
+	// connect the ScriptProcessorNode with the input audio
+	amp[0].connect(AudioAPIscript);
+	// if the ScriptProcessorNode is not connected to an output the "onaudioprocess" event is not triggered in chrome
+	AudioAPIscript.connect(amp[0]);*/
+};
+
+var	sleep, speed, cycle;
+var	cpu = {
+		Logs:[],
+		Alias	:[],	// 
+		Commands:[],	// Описание декодера команд
+		Matrix	:[],
+		ram	:[],
+		iox	:[],
+		R00:0x0000,	R01:0x0000,	R02:0x0000,	R03:0x0000,
+		R10:0x0000,	R11:0x0000,	R12:0x0000,	R13:0x0000,
+		R20:0x0000,	R21:0x0000,	R22:0x0000,	R23:0x0000,
+		R30:0x0000,	R31:0x0000,	R32:0x0000,	R33:0x0000,
+		R40:0x0000,	R41:0x0000,	R42:0x0000,	R43:0x0000,
+		R50:0x0000,	R51:0x0000,	R52:0x0000,	R53:0x0000,
+		R60:0x0000,	R61:0x0000,	R62:0x0000,	R63:0x0000,
+		R70:0x0000,	R71:0x0000,	R72:0x0000,	R73:0x0000,
+		SP:0x0000,	BP:0x7600,	SI:0x0000,	DI:0x0000,
+		SS:0x0000,	IP:0xF800,	XP:0x0000,	CI:0x00,
+		SR:0,		SA:[],
+		LIP:0xF800,	NIP:0xF800,	DIP:0xF800,	Lines:47,
+		DR:0xF800,	// debug register
+		IPN:0,		// n-bytes of IP-command
+		command_set: function(im, large) {
+			var	i, commands = [], operands = [], dump = [],
+				parts = {
+					_:"#123",
+					A:"#770",
+					B:"#441",
+					C:"#711",
+					D:"#550",
+					E:"#060",
+					F:"#057"
+				};
+			for(i = 0x00; i <= 0xF0; i += 0x10) {
+				for(var c = 0x00, z; c <= 0x0F; ++ c) {
+					var z = this.Matrix[(im << 8) | i | c].split("\t"), p, ctrl;
+					p = z[1].charAt(0);
+					z[1] = z[1].substr(1);
+					asm = z[1] + "       ", dmx = z[2];
+					rem = z[2].length - 7;
+					if(rem > 0)
+						asm = asm.substr(0, 7 - rem) + dmx.substr(0, rem),
+						dmx = dmx.substr(-7);
+					ctrl = c < 8 && c == i >> 4 ? "' class=prefix title='Click to Select this prefix' onclick='document.getElementById(\"commands\").innerHTML = cpu.command_set(" + c + "," + large + ")"
+						: large ? "' title='" + this.Matrix[i|c].split("\t") + "'" : "";
+					commands.push("<span style='background-color:" + parts[p] + ctrl + "'>" + (asm + "       ").substr(0, 7) + "</span>");
+					operands.push("<span style='background-color:" + parts[p] + ctrl + "'>" + (dmx + "       ").substr(0, 7) + "</span>");
+				}
+				dump.push(("&#x2551;" + (i >> 4).Hex(1) + "&#x2551;" + commands.join("&#x2502;") + "&#x2551;<br />"
+					+ (large || i >= 0xF0 ? "" : "<u>") + "&#x2551; &#x2551;"+ operands.join("&#x2502;") + "&#x2551;").replace(/(IB|XX)/g, "<b style=color:cyan>$1</b>") + (large ? "" : "</u>"));
+				commands = [], operands = [];
+			}
+			for(i = 0; i < 16; ++ i)
+				operands.push("&#x2550;&#x2550;&#x255D;" + i.Hex(1) + "&#x255A;&#x2550;&#x2550;");
+			return	(im ? (im * 0x11).Hex(2) + "+" : "   ") + "  &#x2554;&#x2550;&#x2557;   ".Mul(16) + "<br />" +
+				"&#x2554;&#x2550;&#x2566;" + operands.join("&#x2564;") + "&#x2557;<br />" +
+				dump.join(large ? "<br />&#x255F;&#x2500&#x256B;" + "&#x2500;".Mul(7).Mul(16, "&#x253C;") + "&#x2562;<br />" : "<br />") +
+				"<br />&#x255A;&#x2550;&#x2569" + "&#x2550".Mul(7).Mul(16, "&#x2567") + "&#x255D";
+		},
+		//////// Disassembler ////////////////////////////////////////
+		disassm: function() {
+			var	ip = this.LIP, lines = this.Lines, next = ip,
+				list = [], lp, width,
+				ips = [],
+				ic, ib, ie, asm, active = this.IP.Hex(4) + " " + this.memory(this.IP).Hex(2),
+				rem = "", row,
+				ctx = this;
+			if(ip > this.IP)
+				ip = this.LIP = this.IP;
+			for(var i = 0, jp = ip; i < lines || jp < this.IP; ++ i) {
+				ie = 0;
+				ips.push(jp);
+				ic = this.ram[jp], jp = (jp + 1) & 0xFFFF;
+				if(ic && (ic & 7 == (ic >> 4)))
+					ie = ic & 7;
+				if(ie)
+					ic = this.ram[jp], jp = (jp + 1) & 0xFFFF;
+				if(ic <= 0xBF && ic >= (ie ? 0x80 : 0x81))
+					ic = this.ram[jp], jp = (jp + 1) & 0xFFFF;
+			}
+			if(ips.length > lines)
+				ip = this.LIP = ips.pop();
+			while(lines --) {
+				row = [ip.Hex(4)];
+				rem = "";
+				ie = 0;
+				data = [this.ram[ip].Hex(2), this.ram[(ip + 1) & 65535].Hex(2), this.ram[(ip + 2) & 65535].Hex(2), this.ram[(ip + 3) & 65535].Hex(2)].join("");
+				do {
+					for(asm in this.Alias)
+						if(typeof(this.Alias[asm]) == "string" && data == this.Alias[asm].replace(/[\s\t]+/g, ""))
+							rem = asm, data = "";
+						else
+							continue;
+				} while(data = data.substr(0, data.length - 2));
+				lp = ip == this.IP;
+				do {
+					lp |= ip == this.IP;
+					ic = this.memory(ip), ip = (ip + 1) & 0xFFFF;
+					z = this.Matrix[(ie << 8) | ic].split("\t");
+					ie = z[1].charAt(0) == "_" ? ic & 7 : 0;
+					row.push(ic.Hex(2));
+				} while(ie);
+				asm = (z[1].substr(1) + "    ").substr(0, 5) + z[2];
+				asm = asm.replace(/(\$\+)?([0-7]?IB)/, function(str, rel) {//$+0IB $+IB 0IB
+					var	data, len = str.length;
+					data = (len == 3 || len == 5 ? parseInt(str.substr(-3)) * 256 : 0);
+					data -= (data & (len == 3 || len == 5 ? 0x400 : 0x80)) * 2;
+					data += ctx.memory(ip);
+					row.push((data & 0xFF).Hex(2));
+					lp |= ip == this.IP;
+					ip = (ip + 1) & 0xFFFF;
+					return rel ? (ip + data).Hex(4) : data.Hex(len == 3 || len == 5 ? 3 : 2);
+				});
+				width = row.length;
+				while(row.length < 4)
+					row.push("  ");
+				asm = row.join(" ") + "|" + (asm + " ".Mul(16)).substr(0, 16) + "|" + rem;
+				if(lp)
+					active = asm,
+					this.IPN = ip - this.IP,
+					asm = "<span style=background-color:green>" + asm + "</span>";
+				else
+					asm = "<span class=prefix onclick='document.getElementById(\"DebugAddr\").value=(cpu.DR=" + parseInt(asm, 16) + ").Hex(4)' title='Set break point'>" + asm + "</span>";
+				if(!list.length)
+					next = ip;
+				list.push(asm);
+			}
+			this.DIP = ip;
+			list.push("IP:" + active);
+			list.push("SP:" + this.SP.Hex(4) + " " + this.ram.Dump(this.SP, 16));
+			list.push("BP:" + this.BP.Hex(4) + " " + this.ram.Dump(this.BP, 16));
+			list.push("SI:" + this.SI.Hex(4) + " " + this.ram.Dump(this.SI, 16));
+			list.push("DI:" + this.DI.Hex(4) + " " + this.ram.Dump(this.DI, 16));
+			list.push("AX:" + this["R" + this.CI + "0"].Hex(4) + ":" + this.flags());
+			list.push("BX:" + this["R" + this.CI + "1"].Hex(4) + " " + this.ram.Dump(this["R" + this.CI + "1"], 16));
+			list.push("CX:" + this["R" + this.CI + "2"].Hex(4) + " " + this.ram.Dump(this["R" + this.CI + "2"], 16));
+			list.push("DX:" + this["R" + this.CI + "3"].Hex(4) + " " + this.ram.Dump(this["R" + this.CI + "3"], 16));
+			row = [];
+			var	locate = this.ram[0x76CE] + this.ram[0x76CF] * 256;
+			var	tunder = locate & 0x1FFF;
+			for(var i = 0, w = 78, h = 30, x, y, z, s = ""; i < w * h; ++ i) {
+				x = i % w, y = Math.floor(i / w);
+				c = this.ram[i + 0x76D0];
+				if(c > 127) {
+					z = String.fromCharCode(c & 127);
+				} else {
+					c = c < 32 ? 0xB7 : c == 127 ? 0x2588 : c;
+					z = String.fromCharCode(c);
+				}
+				if((i == tunder) && (((new Date()).getMilliseconds() % 500) > 250))
+					z = "<u>" + z + "</u>";
+				s += z;
+				if(x == w - 1)
+					row.push(s),
+					s = "";
+//				row[y] = (x ? row[y] : "") +
+//					(x == this.ram[0x76CF] && y == this.ram[0x76CE] && (new Date()).getMilliseconds() % 500 > 250
+//						? "<u>&#" + (c < 32 || c > 127 ? 0xB7 : c == 127 ? 0x2588 : c) + ";</u>"
+//						: "&#" + (c < 32 || c > 127 ? 0xB7 : c == 127 ? 0x2588 : c) + ";");
+			}
+			document.getElementById("Screen").innerHTML = row.join("<br />");
+			return list.join("<br />");
+		},
+		flags: function(d) {
+			var	fx = this["R" + this.CI + "0"] >> 8;
+			if(!isFinite(d)) {
+				var	fgs = "-- -- -- -- pf sf cf zf".split(" "), s = [];
+				d = fx;
+				do {
+					s.push(d & 128 ? fgs[s.length].toUpperCase() : fgs[s.length]);
+					d <<= 1;
+				} while(s.length < 8);
+				return s.join(" ");
+			}
+			fx =	((d << 3) & 0x0400) |
+				(d & 255 ? 0 : 0x100) |
+				((d << 1) & 0x0200);
+			d ^= d >> 4;
+			d ^= d << 2;
+			d ^= d << 1;
+			this["R" + this.CI + "0"] = this["R" + this.CI + "0"] & 0x00FF;
+			this["R" + this.CI + "0"] = this["R" + this.CI + "0"] | ((d & 8) << 8) | fx;
+		},
+		alu: function(r, d, i) {
+			var	cf = (this["R" + this.CI + "0"] >> 9) & 1;
+			switch(i) {
+			case 0: case 2:	// adc/add
+				d = r + (i & 2 ? 0 : cf) + d;
+				//console.log("add");
+				break;
+			case 1: case 3:	// sbb/sub
+				d = r - (i & 2 ? 0 : cf) - d;
+				//console.log("sub");
+				break;
+			case 0x0F: // neg
+				d = -r;
+				//console.log("neg");
+				break;
+			case 0x18: // ror
+				i = r;
+				r |= cf << 8;					// 11010000
+				d = (r >> 1) | ((r << 8) & 256);		// 11101000
+				//console.log("ror");
+				break;
+			case 0x09: // rcl
+				d = (r << 1) | (r >> 7);
+				//console.log("rcl");
+				break;
+			case 0x19: // rcr
+				console.log("rcr "+(r.Hex(2)));
+				d = (r >> 1) | (r << 7);
+				d &= 255;
+				d |= (r << 8) & 256;
+				//console.log("rcr "+(d.Hex(2)));
+				break;
+			case 0x1F: // not
+				d = r ^ 255;
+				//console.log("not");
+				break;
+			case 0x0A: // ral
+				d = r | (r << 8);
+				//console.log("ral");
+				break;
+			case 0x1A: // rar
+				r |= (r & 128) << 1;
+				d = r >> 1;
+				d |= r & 256;
+				//console.log("rar");
+				break;
+			default:
+				d = [r & d, r | d, r ^ d, r - d][i & 3];
+				//console.log("alu"+(i.Hex(2)));
+			}
+			this.flags(d);
+			return i == 7 ? r : d & 255;
+		},
+		memory: function(addr, data) {
+			if(isFinite(data))
+				return this.ram[addr & 0xFFFF] = data.lo();
+			return +this.ram[addr & 0xFFFF];
+		},
+		mem_16: function(addr, data) {
+			if(isFinite(data))
+				return this.memory(addr, data) + this.memory(addr + 1, data >> 8) * 256;
+			return this.memory(addr) + this.memory(addr + 1) * 256;
+		},
+		stack: function(data) {
+			if(isFinite(data) && (this.SP == 0)) {	// Service registers: writing
+				switch(this.SR ++) {
+				}
+				return data;
+			}
+			if(isFinite(data) && (this.SP == 1)) {	// Service registers: writing
+				if(((data >> 0) & 0xF) > 9 || ((data >> 4) & 0xF) > 9 || ((data >> 8) & 0xF) > 9 || ((data >> 12) & 0xF) > 9) {
+					console.log("Service Page: " + data.Hex(4));
+				}
+				this.SS = data;
+				return data;
+			}
+			if(isFinite(data))
+				return this.SP = (this.SP - 2) & 0xFFFF, this.SR = 0,
+					this.memory(this.SP + 1, data.hi()) << 8 | this.memory(this.SP, data);
+			if(this.SP == 0xFFFF) {			// Service registers: reading
+				if(this.SS) {
+					this.SA = [
+						0x0A0D, 0x3858, 0x2030, 0x3056, 0x312E,
+						0x0A0D, 0x4150, 0x4547,	0x2320,
+						this.SS.Hex(4).charCodeAt(0) + this.SS.Hex(4).charCodeAt(1) * 256,
+						this.SS.Hex(4).charCodeAt(2) + this.SS.Hex(4).charCodeAt(3) * 256,
+						0x2420, Number().xxxx(((this.SS >> 8) & 255) + (this.SS & 255) * 255),
+						0x0A0D, 0x4552, 0x5345, 0x5652, 0x4445,
+						0x0A0D, 0xFFFF
+					];
+					console.log("CPU-ID: " + this.SR + " " +this.SA[this.SR]);
+					return this.SR < this.SA.length ? this.SA[this.SR ++] : 0xFFFF;
+				} else {
+					var	now = new Date();
+					this.SA = [
+						0x0A0D, 0x3858, 0x2030, 0x3056, 0x312E,
+						0x0A0D, 0x4954, 0x454D, 0x2420, Number().xxxx(now.getHours() * 1 + now.getMinutes() * 100),
+										Number().xxxx(now.getSeconds() * 1 + Math.floor(now.getMilliseconds() / 10) % 100 * 100),
+						0x0A0D, 0xFFFF
+					];
+					console.log("CPU-ID: " + this.SR + " " +this.SA[this.SR]);
+					return this.SR < this.SA.length ? this.SA[this.SR ++] : 0xFFFF;
+				}
+			}
+			return this.SP = (this.SP + 2) & 0xFFFF, this.SR = 0,
+				this.memory(this.SP - 1) << 8 | this.memory(this.SP - 2);
+		},
+		port:	function(addr, data) {
+			addr &= 0xFF;
+			if(isFinite(data)) {
+				this.iox[addr] = data;
+				switch(addr) {
+				case 0x0A:
+					try { osc[0].frequency.value = data ? noteFreq[data] : 0; } catch(e) {}
+					break;
+				}
+			} else {
+				data = this.iox[addr];
+			}
+			return data;
+		},
+		//////// Processor tick //////////////////////////////////////
+		do_tick: function() {
+			var	ie = 0, max = 32768,
+				ctx = this;
+			do {
+				var	ic = this.memory(this.IP ++),
+					ib = this.memory(this.IP),
+					sb = ib < 128 ? ib : ib - 256,
+					ssb = (ie ? ib + ie * 256 - (ie & 4) * 1024 : sb),
+					z = this.Matrix[(ie << 8) | ic].split("\t");
+				ie = z[1].charAt(0) == "_" ? ic & 7 : ie ? 0 : ie;
+			} while(ie);
+			if(ic < 0xC0 && ic >= (ie == 0 ? 0x80 : 0x81))
+				this.IP ++;
+			if(z[0])
+				eval(z[0]);
+			document.getElementById("listing").innerHTML = cpu.disassm();
+		},
+		//////// Processor cycle /////////////////////////////////////
+		process: function() {
+			var	ie = 0, max = 32768,
+				ib, ic, sb, ssb, z,
+				ctx = this, width;
+			if(this.DR < 0)
+				return setTimeout("cpu.process()", speed);
+			for(var ii = 0; ii < cycle; ++ ii) {
+				if(this.Logs.length < max)
+					this.Logs.push(this.IP.Hex(4) + " " + this.memory(this.IP).Hex(2));
+				else
+				if(this.Logs.length == max)
+					//document.getElementById("Logger").value = this.Logs.join("\r\n"),
+					this.Logs.push(0);
+				if(this.DR >= this.IP && this.DR <= this.IP + this.IPN) {
+					document.getElementById("listing").innerHTML = cpu.disassm();
+					setTimeout("cpu.process()", speed);
+					return;
+				}
+				do {
+					ic = this.memory(this.IP ++),
+					ib = this.memory(this.IP),
+					sb = ib - (ib & 128) * 2,
+					ssb = (ie ? ib + ie * 256 - (ie & 4) * 1024 : sb),
+					z = this.Matrix[(ie << 8) | ic].split("\t");
+					ie = z[1].charAt(0) == "_" ? ic & 7 : ie ? 0 : ie;
+				} while(ie && this.DR >= 0);
+				if(ic < 0xC0 && ic >= (ie == 0 ? 0x80 : 0x81))
+					this.IP ++;
+				if(z[0]) try {
+					eval(z[0]);
+				} catch(e) {
+					console.log(this.IP.Hex(4) + ": " + ic.Hex(2) + " " + ib.Hex(2) + " ..|" + z[0]);
+				}
+			}
+			document.getElementById("listing").innerHTML = cpu.disassm();
+			setTimeout("cpu.process()", speed);
+		},
+		//////// Assembler ///////////////////////////////////////////
+		assembly: function(listing) {
+			var	text = listing.split(/\r?\n/),
+				line, part, regs, args, code, regz, regy, regw,
+				ip,
+				labels = {},	// All labels
+				label,		// Current label
+				labelz = {},
+				lap = 2;
+			do {
+				ip = -1; label = [];
+				for(line in text) {
+					part = text[line];
+					part = /([^:;"'`\s]*(?::| ?))?(?:\s)*([^\s;]*)(?:\s*)([^\s,;"'`]*)(?:[,\s]*)?([^\s,;"'`]*)(?:[,\s]*)?(?:(?:("(?:\\.|.)*?")|('(?:\\.|.)*?')|(`(?:\\.|.)*?`)|[^;"'`]*)*)*(\.*)/.exec(part);
+					if(part[1]) {
+						if(" :".indexOf(part[1].substr(-1)) > 0)
+							part[1] = part[1].substr(0, part[1].length - 1);
+						part[1] = part[1].toUpperCase();
+						if(part[1].charAt(0) == ".") {
+							var	i = 0, n = [];
+							while(part[1].charAt(i) == ".") {
+								n.push(label[i]);
+								++ i;
+							}
+							n = n.concat(part[1].substr(i).split("."));
+							label = label.slice(0, i).concat(part[1].substr(i));
+							part[1] = label.join(".");
+						} else
+							label = [part[1]];
+						labels[part[1]] = ip;
+						labelz = {};
+						do {
+							var	idn = "";
+							for(var id in labels)
+								idn = id.length > idn.length && id.substr(-1) != " " && !labelz[id] ? id : idn;
+							if(idn != "")
+								labelz[idn] = labels[idn];
+						} while(idn != "");
+					}
+					instr = part[2].toUpperCase();
+					part[3] = part[3].replace(/^(\.+)/, function(str, data) {
+						var	data = data.length;
+						return label.slice(0, data).join(".") + ".";
+					});
+					part[4] = part[4].replace(/^(\.+)/, function(str, data) {
+						var	data = data.length;
+						return label.slice(0, data).join(".") + ".";
+					});
+					regs = part[3];
+					if(part[4])
+						regs += "," + part[4];
+					regs = regs.replace(/(-[0-9]+)/g, function(str, data) {
+						console.log(data);
+						return "+" + (Number(data) + 256);
+					});
+					args = [];
+					if(this.Alias[instr]) {
+						regs = this.Alias[instr].split(/[\t\s]+/);
+						for(var i in regs) {
+							if(typeof(regs[i]) == "string")
+								this.ram[ip ++] = parseInt(regs[i], 16);
+						}
+						continue;
+					}
+					for(var i in labelz) {
+						regs = regs.replace(new RegExp("("+i.replace(/(\.)/g, "\\.")+")", "gi"), function(str, data) {
+							///*if(!lap)*/	console.log("LABEL (" + data + ':' + labelz[i].Hex(4));
+							return "0x" + labelz[i].Hex(4);
+						});
+					}
+					regs = regs.replace(/\$([+-][0-9]+)/, function(str, data) {
+						data = ip + parseInt(data);
+						return "0x" + data.Hex(4);
+					});
+					regy = regs.replace(/(0x[0-9A-F]+)|([0-9]+)/gi, function(str, data) {
+						data = parseInt(data);
+						data = (data >> 8).Hex(2) + "IB";
+						return data;
+					});
+					regw = regs.replace(/(0x[0-9A-F]+|[0-9]+)/gi, function(str, data) {
+						data = (parseInt(data) >> 8) & 7;
+						data -= data > 0 && data < 4 ? 1 : 0;
+						data = "$+" + "IB";
+						return data;
+					});
+					regz = regs.replace(/(0x[0-9A-F]+|[0-9]+)/gi, function(str, data) {
+						data = (parseInt(data) >> 8) & 7;
+						data -= data > 0 && data < 4 ? 1 : 0;
+						data = "$+" + (data ? (data - (data & 4) * 2).Hex(2) : "") + "IB";
+						return data;
+					});
+					regs = regs.replace(/(0x[0-9A-F]+|[0-9]+)/gi, function(str, data) {
+						args.push(parseInt(data));
+						return "IB";
+					});
+					switch(instr) {
+					case	"ORG"
+					:	ip = args.shift();
+						continue;
+					case	"EQU"
+					:	labels[part[1].toUpperCase()] = args.shift();
+						continue;
+					case	"DB"
+					:	while(args.length)
+							this.ram[ip ++] = args.shift();
+						continue;
+					case	"DW"
+					:	while(args.length)
+							this.mem_16(ip ++, args.shift());
+							ip ++;
+						continue;
+					}
+					if(this.Commands[instr]) {
+						(code = this.Commands[instr][regs]) ||
+						(code = this.Commands[instr][regz]) ||
+						(code = this.Commands[instr][regy]) ||
+						(code = this.Commands[instr][regw]) ||
+						(code = 0x00);
+						if(!lap && instr=='CNC')
+						console.log(instr+':'+regz+'='+code.Hex(3)+'   '+regs+'.'+regz+'.'+regy);
+						if(code >= 0x100)
+							this.ram[ip ++] = ((code >> 8) & 7) * 0x11;
+						this.ram[ip ++] = code & 0xFF;
+						args.push(0x00);
+						args.push(0x00);
+						if(code >= 0x0B0 && code <= 0x0BF) {
+							this.ram[ip] = (args.shift() - ip - 1);
+							if(this.ram[ip] > 127 || this.ram[ip] < -128)
+								if(!lap)
+									console.log("[" + (line + 1) + ")" + label.join(".") + ": Error of relative address (" + this.ram[ip] + ")>> " + text[line]);
+							this.ram[ip] &= 255;
+//							console.log("jr < 128");
+						} else
+						if((code & 0xF8) == 0xB8) {
+							this.ram[ip] = ((code & 0x700) + args.shift()) - (code & 0x400) * 2 - ip - 1;
+							//if(this.ram[ip] > 127 || this.ram[ip] < -128)
+							//	if(!lap)
+							//s		console.log("[" + (line + 1) + ")" + label.join(".") + ": Error of relative address (" + this.ram[ip] + ")>> " + text[line]);
+							this.ram[ip] &= 255;
+//							console.log("jr > 128");
+						} else
+						if(code >= 0x100 && (code & 0xC0) == 0x80)
+							this.ram[ip] = args.shift() & 255;
+						else
+						if(code > 0x080 && code <= 0x0AF)
+							this.ram[ip] = args.shift() & 255;
+						if((code >= 0x0B0 && code <= 0x0BF)
+						|| ((code & 0xF8) == 0xB8)
+						|| (code >= 0x100 && (code & 0xC0) == 0x80)
+						|| (code > 0x080 && code <= 0x0AF))
+							++ ip;
+					}
+				}
+			} while(lap --);
+			for(label in labelz)
+				console.log(label + "\tEQU\t" + labelz[label].Hex(4));
+		}
+	};
+function main() {
+	document.body.onkeypress = function(e) {
+		cpu.iox[0xFD] = e.charCode;
+	}
+	document.body.onkeydown = function(e){
+		switch(e.keyCode) {
+		case 37:	// <--
+			cpu.iox[0xFD] = 0x08; break;
+		case 38:	// //\
+			cpu.iox[0xFD] = 0x19; break;
+		case 39:	// -->
+			cpu.iox[0xFD] = 0x18; break;
+		case 40:	// \//
+			cpu.iox[0xFD] = 0x1A; break;
+		default:
+			break;
+		}
+	}
+	document.body.onkeyup = function(e){
+		switch(e.keyCode) {
+		default:
+			cpu.iox[0xFD] = 0x00; break;
+		}
+	}
+	var	url = window.location.href, match = 0,
+		Commands = document.getElementById("Commands").innerText,
+		Logics = [],
+		Matrix = [],
+		Registers = [],
+		counter = 0,
+		i;
+	Commands.replace(/^([A-Z]+):\t([0-9A-Z\s\t]+)$/gm, function(str, alias, instr) {
+		cpu.Alias[alias] = instr;
+	});
+	Commands.replace(/^(.{1,13})\t(.*)$/gm, function(str) {
+		var	str = str.split(/\t+/);
+		Registers[str[0]] = str[1];
+		str[0] = str[0].charAt(0) + "_" + str[0].substr(1);
+		if(str[2])	Logics[str[0] + "="] = str[2];
+		if(str[3])	Logics[str[0]] = str[3];
+	});
+	Commands.replace(/^([0X1]{14})([A-F_])\t([^:\t]+)\t*([^:\t]*?)\t*:(.*)$/gm, function(str, mask, part, name, opers, logic) {
+		var	Bits = [], Opts = 0,
+			m,
+			Mask = parseInt(mask.replace(/X/g, function(str, pos) {
+				Bits.unshift(1 << (13 - pos));
+				if(pos < 2)
+					Opts |= 1 << (13 - pos);
+				return "0";
+			}), 2),
+			cv, cw, cx, cy, logs, cmnd, regs,
+			eq, sh,
+			Cnt = 1 << Bits.length;
+		while(Cnt --) {
+			var	i = Bits.length,
+				n = Mask;
+			while(i --)
+				n |= (Cnt >> i) & 1 ? Bits[i] : 0;
+			cw = n & 0x1F, cx = n & 7, cy = (n >> 4) & 7, cz = (n >> 8) & 7, cv = cz ? cz * 32 + cw : cw,
+			ct = (n & 0x0F) + 10 * (cz ? cz : 0), cu = cz ? ((cz - (cz & 4) * 2) & 255).Hex(2) : "",
+			eq = (((cx == cy ? 0 : 3) | (cz == 0 ? 0 : cx == cz ? 0 : cx > cz ? 1 : cz > cx ? 2 : 3)) | (cx < cy ? 4 : 0)) << 11,
+			sh = ((cz >> 3) & 1) << 10;
+			if(!Matrix[n & 0x7FF] && (Opts || ((n & 0x3800) == eq))) {
+				cmnd = name
+					.replace(/#T/g, ct)
+					.replace(/#U/g, cu)
+					.replace(/#V/g, cv.Hex(2))
+					.replace(/#W/g, cw.Hex(2))
+					.replace(/#X/g, cx.Hex(2))
+					.replace(/#Y/g, cy.Hex(2))
+					.replace(/#Z/g, cz.Hex(2));
+				regs = opers
+					.replace(/#T/g, ct)
+					.replace(/#U/g, cu)
+					.replace(/#V/g, cv.Hex(2))
+					.replace(/#W/g, cw.Hex(2))
+					.replace(/#X/g, cx.Hex(2))
+					.replace(/#Y/g, cy.Hex(2))
+					.replace(/#Z/g, cz.Hex(2));
+				logs = logic
+					.replace(/#U/g, cu)
+					.replace(/#V/g, cv.Hex(2))
+					.replace(/#W/g, cw.Hex(2))
+					.replace(/#X/g, cx.Hex(2))
+					.replace(/#Y/g, cy.Hex(2))
+					.replace(/#Z/g, cz.Hex(2));
+				for(i in Registers)
+					cmnd = cmnd.replace(new RegExp(i, "g"), Registers[i]),
+					regs = regs.replace(new RegExp(i, "g"), Registers[i]);
+				for(i in Logics)
+					logs = logs.replace(new RegExp(i, "g"), Logics[i]);
+				Matrix[n & 0x7FF] =
+					logs
+					+ "\t" + part
+					+ [cmnd, regs].join("\t");
+				if(!cpu.Commands[cmnd])
+					cpu.Commands[cmnd] = [];
+				cpu.Commands[cmnd][regs] = n & 0x7FF;
+				++ counter;
+			}
+		}
+	});
+	console.log("Number of command is " + counter);
+	cpu.Matrix = Matrix;
+	if(url.match(/instructions/)) {
+		var	body = document.createElement("body");
+		var	pre = document.createElement("pre");
+		pre.id = "commands";
+		pre.innerHTML = cpu.command_set(0, true);
+		body.appendChild(pre);
+		body.style.backgroundColor = "steelblue";
+		document.body = body;
+		return;
+	}
+	document.getElementById("commands").innerHTML = cpu.command_set(Math.floor((new Date()).getSeconds() / 3) % 11 * 0);
+	for(i = 0; i <= 65535; ++ i)
+		cpu.ram[i] = 0;
+	for(i = 0; i <= 255; ++ i)
+		cpu.iox[i] = 0;
+	i = 0;
+	document.getElementById("listing").innerText.replace(/\s*;.*/gm, "").replace(/([0-9A-F]{4})(?:\:)|([0-9A-F]{2})(?:\s)/gm, function(str, p1, p2) {
+		if(p1)
+			i = parseInt(p1, 16);
+		if(p2)
+			cpu.ram[i ++] = parseInt(p2, 16);
+		return "_";
+	});
+	document.getElementById("listing").innerHTML = cpu.disassm();
+	reset = +((match = url.match(/reset=([^&]+)/)) ? match[1] : 60*0+1000);
+	speed = +((match = url.match(/speed=([^&]+)/)) ? match[1] : .1*0+500);
+	cycle = +((match = url.match(/cycle=([^&]+)/)) ? match[1] : 1);
+	cpu.DR = +((match = url.match(/debug=([^&]+)/)) ? parseInt(match[1], 16) : 0xFFFF);
+	document.getElementById("DebugAddr").value = cpu.DR.Hex(4);
+	Reset = setInterval('window.location.reload()', reset * 1000);
+	cpu.LIP = cpu.NIP = cpu.DIP = cpu.IP;
+	cpu.assembly(document.getElementById("Listing").value);
+	AudioInit();
+	cpu.process();
+}
+</script>
+</head>
+<body onload='main(this)'>
+<var id='Commands'>
+// This zone is very import for normal work of assemler, disassembler and emulation. Do not touch this if You not having understanding.
+// Decoder
+X0000000000000C	HLT			:ctx.IP--
+XXX00010000000C	NOP			:
+XXX00011111111B	RET			:ctx.IP=ctx.stack()
+0000000XXX0XXX_	PREFIX	R#X/P#X		:
+XXX10010101XXXA	ALU#X	IB		:$1=ctx.alu(ib,R_#Z,#X), (0x0A>>#X)&1?R_#Z=$1:$1
+XXXXXX10101XXXA	ALU#X	A#Z,IB		:$1=ctx.alu(A_#Z,ib,#X), A_#Z=$1
+XXX1000XXX1XXXA	ALU#X	A#Y		:$1=ctx.alu(A_#Y,R_#Z,#X), (0x0A>>#X)&1?A_#Z=$1:$1
+XXXXXX0XXX1XXXA	ALU#X	A#Z,R#Y		:$1=ctx.alu(A_#Z,R_#Y,#X), A_#Z=$1
+000XXX0XXX0XXXC	CONTEXT	#X		:ctx.CI=#X
+XXX00011001111A	CMC			:ctx["R" + ctx.CI + "0"] ^= 0x0200
+XXXXXX110X100XA	SHIFT#W	A#Z		:$1=ctx.alu(A_#Z,0, 0x#V & 0x1F), A_#Z=$1
+XXXXXX110X1010A	SHIFT#W	A#Z		:$1=ctx.alu(A_#Z,0, 0x#V & 0x1F), A_#Z=$1
+XXXXXX110X1111A	SHIFT#W	A#Z		:$1=ctx.alu(A_#Z,0, 0x#V & 0x1F), A_#Z=$1
+01110000000XXXE	PUSH	T#X+[T#Y]	:ctx.stack(T_#X+ctx.stack())
+0111000XXX0XXXE	PUSH	T#X+T#Y		:ctx.stack(T_#X+T_#Y)
+1111000XXX0000E	PUSH	[T#X]-T#Y	:ctx.stack(ctx.stack()-T_#Y)
+1111000XXX0XXXE	PUSH	T#X-T#Y		:ctx.stack(T_#X-T_#Y)
+XXX10111101111B	LOOP			:ctx.stack(ctx.IP)
+XXX00011101111E	XCHG	P05,[P04]	:$1=ctx.R01, ctx.R01=ctx.mem_16(ctx.SP), ctx.mem_16(ctx.SP, $1);
+XXX00011111110B	XCHG	IP,[P04]	:$1=ctx.IP, (ctx.IP=ctx.mem_16(ctx.SP), ctx.mem_16(ctx.SP, $1))
+XXX0000XXX0XXXF	MOV	R#X,R#Y		:R_#X=R_#Y
+XXX00010100XXXF	MOV	R#X,IB		:R_#X=ib
+XXX00010110000E	PUSH	00IB		:ctx.stack(0x0000 + ib)
+XXX00010110001E	PUSH	($+IB)		:ctx.stack((ctx.IP + sib) & 0xFFFF)
+XXX00010110XXXB	C_C#X	$+IB		:ctx.IP+=((ctx["R" + ctx.CI + "0"]>>(11-(#X>>1)))^(#X&1))&1?[ctx.stack(ctx.IP),sb][1]:0
+XXX00011000XXXA	INC	R#X		:$1=ctx.alu(R_#X, 1, 2), R_#X=$1
+XXX00011001011D	INC	S#X		:S_#X=(S_#X+1)&65535
+XXX0001100110XD	INC	S#X		:S_#X=(S_#X+1)&65535
+XXX00011001110D	INC	S#X		:S_#X=(S_#X+1)&65535
+XXX00011010XXXA	DEC	R#X		:$1=ctx.alu(R_#X, 1, 3), R_#X=$1
+XXX00011011011D	DEC	S#X		:S_#X=(S_#X-1)&65535
+XXX0001101110XD	DEC	S#X		:S_#X=(S_#X-1)&65535
+XXX00011011110D	DEC	S#X		:S_#X=(S_#X-1)&65535
+XXX0001110101XE	PUSH	Q#X		:ctx.SP==0&&#X==2?ctx.SR=(ctx.SR+R_04+1)&65535:ctx.stack(Q_#X)
+XXX0001110110XE	PUSH	Q#X		:ctx.SP==0&&#X==2?ctx.SR=(ctx.SR+R_04+1)&65535:ctx.stack(Q_#X)
+XXX0001111101XE	POP	Q#X		:Q_#X=ctx.SP==0xFFFF&&#X==2?ctx.SR:ctx.stack()
+XXX0001111110XE	POP	Q#X		:Q_#X=ctx.SP==0xFFFF&&#X==2?ctx.SR:ctx.stack()
+XXXXXX11110XXXB	INT	#T		:
+XXXXXX1111100XB	INT	#T		:
+001XXX0XXX0XXXE	XCHG	P#Z,P#Y		:$1=P_#Z,P_#Z=P_#Y,P_#Y=$1
+010XXX0XXX0XXXE	XCHG	R#Z,R#Y		:$1=R_#Z,R_#Z=R_#Y,R_#Y=$1
+011XXX0XXX0XXXD	LEA	P#Z,T#X+T#Y	:P_#Z=T_#X+T_#Y
+111XXX0XXX0XXXD	LEA	P#Z,T#X-T#Y	:P_#Z=T_#X-T_#Y
+XXXXXX10100000E	POP	[P#Z+IB]	:ctx.mem_16(P_#Z+sb,ctx.stack())
+XXXXXX10100XXXF	MOV	R#X,[P#Z+IB]	:$1=P_#Z+sb,R_#X=(#Z==4&&($1<0||$1>65535)?ctx.port($1):ctx.memory($1))
+XXXXXX10110000E	PUSH	[P#Z+IB]	:ctx.stack(ctx.mem_16(P_#Z+sb))
+XXXXXX10110XXXF	MOV	[P#Z+IB],R#X	:$1=P_#Z+sb,(#Z==4&&($1<0||$1>65535)?ctx.port($1,R_#X):ctx.memory($1,R_#X))
+XXXXXX11001110D	ADC	BX,P#Z		:$1=S03+P_#Z+(F_LG&0x02?1:0),F_LG=(($1>65535?2:0)|(($1&65535)>32767?8:0)),S03=($1&65535)
+XXXXXX11001011D	ADD	S#X,P#Z		:$1=S_#X+P_#Z,F_LG=(($1>65535?2:0)|(($1&65535)>32767?8:0)),S_#X=($1&65535)
+XXXXXX1100110XD	ADD	S#X,P#Z		:$1=S_#X+P_#Z,F_LG=(($1>65535?2:0)|(($1&65535)>32767?8:0)),S_#X=($1&65535)
+XXXXXX11011110D	SBB	BX,P#Z		:$1=S03-P_#Z-(F_LG&0x02?1:0),F_LG=(($1<0?2:0)|(($1&65535)>32767?8:0)),S03=($1&65535)
+XXXXXX11011011D	SUB	S#X,P#Z		:$1=S_#X-P_#Z,F_LG=(($1<0?2:0)|(($1&65535)>32767?8:0)),S_#X=($1&65535)
+XXXXXX1101110XD	SUB	S#X,P#Z		:$1=S_#X-P_#Z,F_LG=(($1<0?2:0)|(($1&65535)>32767?8:0)),S_#X=($1&65535)
+XXX0XX11101010E	PUSH	P#Z		:ctx.stack(P_#Z)
+XXXXXX11101111E	XCHG	P#Z,[P04]	:$1=P_#Z, P_#Z=ctx.mem_16(ctx.SP), ctx.mem_16(ctx.SP, $1);
+XXX0XX11111010E	POP	P#Z		:P_#Z=ctx.stack()
+XXXXXX11111111E	RET	#Z		:ctx.IP=ctx.stack(),ctx.SP+=#Z*2
+XXXXXX100XXXXXE	PUSH	#VIB		:ctx.stack(0x#V00 + ib)
+XXXXXX10111XXXB	J_C#X	$+#UIB		:ctx.IP+=((ctx["R" + ctx.CI + "0"]>>(11-(#X>>1)))^(#X&1))&1?ssb:0
+XXXXXX111X100XC	---			:
+XXXXXX11101110C	---			:
+XXXXXXXXXXXXXXC	---			:
+// Helpers
+ALU00	ADC
+ALU01	SBB
+ALU02	ADD
+ALU03	SUB
+ALU04	AND
+ALU05	OR
+ALU06	XOR
+ALU07	CMP
+SHIFT08	---
+SHIFT09	RCL
+SHIFT0A	RAL
+SHIFT0F	NEG
+SHIFT18	ROR
+SHIFT19	RCR
+SHIFT1A	RAR
+SHIFT1F	NOT
+// Register descriptions
+P00	IP	ctx.IP =									ctx.IP
+P01	BP	ctx.BP =									ctx.BP
+P02	SI	ctx.SI =									ctx.SI
+P03	DI	ctx.DI =									ctx.DI
+P04	SP	ctx.SP =									ctx.SP
+P05	BX	ctx["R" + ctx.CI + "1"] = 							ctx["R" + ctx.CI + "1"]
+P06	CX	ctx["R" + ctx.CI + "2"] = 							ctx["R" + ctx.CI + "2"]
+P07	DX	ctx["R" + ctx.CI + "3"] = 							ctx["R" + ctx.CI + "3"]
+Q02	AX	ctx["R" + ctx.CI + "0"] = 							ctx["R" + ctx.CI + "0"]
+Q03	BX	ctx["R" + ctx.CI + "1"] = 							ctx["R" + ctx.CI + "1"]
+Q04	CX	ctx["R" + ctx.CI + "2"] = 							ctx["R" + ctx.CI + "2"]
+Q05	DX	ctx["R" + ctx.CI + "3"] = 							ctx["R" + ctx.CI + "3"]
+FLG	FX	ctx["R" + ctx.CI + "0"] = (ctx["R" + ctx.CI + "0"] & 0x00FF) + 0x0100 *		((ctx["R" + ctx.CI + "0"] >> 8) & 0x00FF)
+A00	AL	ctx["R" + ctx.CI + "0"] = (ctx["R" + ctx.CI + "0"] & 0xFF00) + 0x0001 *		((ctx["R" + ctx.CI + "0"] >> 0) & 0x00FF)
+A01	BH	ctx["R" + ctx.CI + "1"] = (ctx["R" + ctx.CI + "1"] & 0x00FF) + 0x0100 *		((ctx["R" + ctx.CI + "1"] >> 8) & 0x00FF)
+A02	CH	ctx["R" + ctx.CI + "2"] = (ctx["R" + ctx.CI + "2"] & 0x00FF) + 0x0100 *		((ctx["R" + ctx.CI + "2"] >> 8) & 0x00FF)
+A03	DH	ctx["R" + ctx.CI + "3"] = (ctx["R" + ctx.CI + "3"] & 0x00FF) + 0x0100 *		((ctx["R" + ctx.CI + "3"] >> 8) & 0x00FF)
+A04	AL	ctx["R" + ctx.CI + "0"] = (ctx["R" + ctx.CI + "0"] & 0xFF00) + 0x0001 *		((ctx["R" + ctx.CI + "0"] >> 0) & 0x00FF)
+A05	BL	ctx["R" + ctx.CI + "1"] = (ctx["R" + ctx.CI + "1"] & 0xFF00) + 0x0001 *		((ctx["R" + ctx.CI + "1"] >> 0) & 0x00FF)
+A06	CL	ctx["R" + ctx.CI + "2"] = (ctx["R" + ctx.CI + "2"] & 0xFF00) + 0x0001 *		((ctx["R" + ctx.CI + "2"] >> 0) & 0x00FF)
+A07	DL	ctx["R" + ctx.CI + "3"] = (ctx["R" + ctx.CI + "3"] & 0xFF00) + 0x0001 *		((ctx["R" + ctx.CI + "3"] >> 0) & 0x00FF)
+R00	[BX]	ctx.ram[ctx["R" + ctx.CI + "1"]] =						ctx.memory(ctx["R" + ctx.CI + "1"])
+R01	BH	ctx["R" + ctx.CI + "1"] = (ctx["R" + ctx.CI + "1"] & 0x00FF) + 0x0100 *		((ctx["R" + ctx.CI + "1"] >> 8) & 0x00FF)
+R02	CH	ctx["R" + ctx.CI + "2"] = (ctx["R" + ctx.CI + "2"] & 0x00FF) + 0x0100 *		((ctx["R" + ctx.CI + "2"] >> 8) & 0x00FF)
+R03	DH	ctx["R" + ctx.CI + "3"] = (ctx["R" + ctx.CI + "3"] & 0x00FF) + 0x0100 *		((ctx["R" + ctx.CI + "3"] >> 8) & 0x00FF)
+R04	AL	ctx["R" + ctx.CI + "0"] = (ctx["R" + ctx.CI + "0"] & 0xFF00) + 0x0001 *		((ctx["R" + ctx.CI + "0"] >> 0) & 0x00FF)
+R05	BL	ctx["R" + ctx.CI + "1"] = (ctx["R" + ctx.CI + "1"] & 0xFF00) + 0x0001 *		((ctx["R" + ctx.CI + "1"] >> 0) & 0x00FF)
+R06	CL	ctx["R" + ctx.CI + "2"] = (ctx["R" + ctx.CI + "2"] & 0xFF00) + 0x0001 *		((ctx["R" + ctx.CI + "2"] >> 0) & 0x00FF)
+R07	DL	ctx["R" + ctx.CI + "3"] = (ctx["R" + ctx.CI + "3"] & 0xFF00) + 0x0001 *		((ctx["R" + ctx.CI + "3"] >> 0) & 0x00FF)
+S03	BX	ctx["R" + ctx.CI + "1"] = 							((ctx["R" + ctx.CI + "1"] >> 0) & 0xFFFF)
+S04	CX	ctx["R" + ctx.CI + "2"] = 							((ctx["R" + ctx.CI + "2"] >> 0) & 0xFFFF)
+S05	DX	ctx["R" + ctx.CI + "3"] = 							((ctx["R" + ctx.CI + "3"] >> 0) & 0xFFFF)
+S06	SP	ctx.SP =									ctx.SP
+T00	SP	ctx.SP =									ctx.SP
+T01	BP	ctx.BP =									ctx.BP
+T02	SI	ctx.SI =									ctx.SI
+T03	DI	ctx.DI =									ctx.DI
+T04	AL	ctx.IP =									((ctx["R" + ctx.CI + "0"] & 0x0080 ? 0xFF00 : 0x0000) | ((ctx["R" + ctx.CI + "0"] >> 0) & 0x00FF))
+T05	BX	ctx["R" + ctx.CI + "1"] = 							ctx["R" + ctx.CI + "1"]
+T06	CX	ctx["R" + ctx.CI + "2"] = 							ctx["R" + ctx.CI + "2"]
+T07	DX	ctx["R" + ctx.CI + "3"] = 							ctx["R" + ctx.CI + "3"]
+// Flags identifiers
+_C00	PE
+_C01	PO
+_C02	S
+_C03	NS
+_C04	C
+_C05	NC
+_C06	Z
+_C07	NZ
+// Aliases
+REPEAT:	EF 44 AA 00
+CLC:	CF BC FD
+STC:	CF BD FD
+RPE:	B8 FF
+RPO:	B9 FF
+RS:	BA FF
+RNS:	BB FF
+RC:	BC FF
+RNC:	BD FF
+RZ:	BE FF
+RNZ:	BF FF
+REPZ:	BE FE
+REPNZ:	BF FE
+</var>
+<!------------------------------------------------------------------------------------------------->
+<textarea id='Listing' style=display:none>
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+	ORG	0x0100
+; CPU Service Registers shower
+; Use Left/Right keys to switch Services Page
+CPU_ID:	MOV	CH,0
+	MOV	CL,0
+.begin:	PUSH	CX
+	MOV	AL,0x1F
+	XCHG	BP,BX
+	XOR	BL,BL
+	XCHG	BP,BX
+	PUSH	BIOS.PutC_A
+	XCHG	IP,[SP]
+.show:	POP	CX
+.shown:	PUSH	CX
+	MOV	BL,1
+	MOV	BH,0
+	XCHG	SP,BX
+	PUSH	CX
+	XCHG	SP,BX
+	MOV	BH,0x0A
+	MOV	BL,0x00
+	PUSH	BX
+	XOR	DL,DL
+	MOV	DH,DL
+	DEC	DX
+	XCHG	SP,DX
+	MOV	[BX],0x0C
+	INC	BX
+.loop:	POP	CX
+	MOV	[BX],CL
+	INC	BX
+	MOV	[BX],CH
+	INC	BX
+	AND	CH,CL
+	INC	CH
+	JNZ	.loop
+	XCHG	SP,DX
+	POP	BX
+.loop:	MOV	AL,[BX]
+	INC	BX
+	CMP	AL,0xFF
+	JZ	.quit
+	CMP	AL,0x00
+	JZ	.quit
+	CMP	AL,0x24
+	JZ	.number
+	PUSH	BIOS.PutC_A
+	XCHG	IP,[SP]
+	JNZ	.loop
+.number:MOV	AL,[BX]
+	AND	AL,0x0F
+	CMP	AL,0x0A
+	JNC	.loop
+	MOV	AL,[BX]
+	AND	AL,0xF0
+	CMP	AL,0xA0
+	JNC	.loop
+	MOV	AL,[BX]
+	INC	BX
+	PUSH	BIOS.PutByte
+	XCHG	IP,[SP]
+	MOV	AL,0x20
+	PUSH	BIOS.PutC_A
+	XCHG	IP,[SP]
+	XOR	AL,AL
+	JZ	.number
+.quit:	MOV	DL,127
+	MOV	AL,0xFD
+	PUSH	BIOS.PortIO
+	XCHG	IP,[SP]
+	POP	CX
+	INC	CX
+	CMP	AL,0x18
+	JZ	.begin
+	DEC	CX
+	DEC	CX
+	CMP	AL,0x08
+	JZ	.begin
+	INC	CX
+	JNZ	.shown
+Hello:	XOR	AL,AL
+	CZ	.start
+	DB	0x50 0x76
+	DB	0x50 0x76
+.start:	POP	SI
+	PUSH	[SI+0]
+	POP	BP
+	MOV	[BP+8],AL
+	MOV	[BP+9],AL
+	MOV	BH,0x89
+.run:	PUSH	BX
+	XOR	AL,AL
+	CZ	.scroll
+	MOV	AL,DH
+	AND	AL,3
+	JNZ	.delay
+	MOV	CH,5
+	LOOP
+	PUSH	[SP+0]
+	ADD	BL,78
+	ADC	BH,0
+	MOV	AL,BH
+	AND	AL,0x1F
+	ADD	AL,0x40
+	MOV	[BX+78],AL
+	DEC	CH
+	RNZ
+	POP	AX
+	POP	AX
+.delay:	DEC	CL
+	JNZ	.delay
+	POP	BX
+	MOV	AL,BH
+	AND	AL,0x1F
+	CMP	AL,8
+	JZ	.revert
+	CMP	AL,23
+	JNZ	.next
+.revert:XOR	BH,0x80
+.next:	INC	DH
+	MOV	AL,DH
+	AND	AL,31
+	JNZ	.run
+	MOV	AL,BH
+	ADD	AL,AL
+	SBB	AL,AL
+	ADD	AL,AL
+	INC	AL
+	ADD	BH,AL
+	CMP	AL,AL
+	JZ	.run
+.scroll:MOV	BL,77
+	AND	BH,0x1F
+	PUSH	[BP+0x0E]
+	XCHG	IP,[SP]
+	XOR	AL,AL
+	MOV	CL,78
+	LOOP
+	PUSH	[SP+0]
+	MOV	[BX],AL
+	DEC	BX
+	DEC	CL
+	RNZ
+	POP	AX
+	POP	AX
+	MOV	CH,5
+	LOOP
+	PUSH	[SP+0]
+	MOV	CL,78
+	XOR	AL,AL
+	LOOP
+	PUSH	[SP+0]
+	MOV	DL,[BX]
+	MOV	[BX],AL
+	MOV	AL,DL
+	DEC	BX
+	DEC	CL
+	RNZ
+	POP	[SP-2]
+	POP	[SP-2]
+	DEC	CH
+	RNZ
+	POP	AX
+	POP	AX
+	MOV	CL,78
+	LOOP
+	PUSH	[SP+0]
+	MOV	[BX],CH
+	DEC	BX
+	DEC	CL
+	RNZ
+	POP	AX
+	POP	AX
+	RET
+	HLT
+	ORG	0x2000
+; Left/Right to move and Up-key to rotate
+Tetris:	MOV	BL,0x50
+	MOV	BH,0x76
+	XCHG	BP,BX
+	MOV	BH,0x76
+	MOV	BL,0xD0
+.loop:	MOV	[BX],0x00
+	INC	BX
+	MOV	AL,BH
+	ADD	AL,AL
+	;JNC	.loop
+	MOV	BL,32
+	PUSH	0x6900	; 011 010 010
+	POP	DX
+	;ADD	DX,DX
+.next:	AND	BH,0xE0
+	OR	BH,2
+.loop:	MOV	CL,0x08
+	MOV	CH,0x00
+..dbl:	PUSH	CX
+..delay:DEC	CX
+	MOV	AL,CL
+	OR	AL,CH
+	JNZ	..delay
+	XOR	AL,AL
+	CMC
+	PUSH	BX
+	PUSH	DX
+	PUSH	.figures
+	XCHG	IP,[SP]
+	POP	DX
+	POP	BX
+	POP	CX
+	MOV	CH,CL
+	AND	CH,0x01
+	DEC	CH
+	AND	CH,0x04
+	DEC	CL
+	PUSH	AX
+	MOV	AL,CL
+	AND	AL,0x01
+	CZ	.ctrl
+	POP	AX
+	JNZ	..dbl
+	INC	BH
+	MOV	AL,BH
+	AND	AL,0x1F
+	CMP	AL,27
+	JNC	.stand
+	CMC
+	PUSH	BX
+	PUSH	DX
+	PUSH	.figures
+	XCHG	IP,[SP]
+	POP	DX
+	POP	BX
+	JZ	.loop
+.stand:	PUSH	BX
+	PUSH	DX
+	DEC	BH
+	CMC
+	PUSH	.figures
+	XCHG	IP,[SP]
+	MOV	DL,0x0A
+	MOV	AL,55
+	PUSH	BIOS.PortIO
+	XCHG	IP,[SP]
+	POP	DX
+	POP	BX
+	MOV	CH,0x2F
+.other:	DEC	CX
+	MOV	AL,CL
+	OR	AL,CH
+	JNZ	.other
+	PUSH	DX
+	MOV	DL,0x0A
+	MOV	AL,0
+	PUSH	BIOS.PortIO
+	XCHG	IP,[SP]
+	POP	DX
+	ADD	BH,0x20
+	MOV	AL,BH
+	AND	AL,0x1F
+	CMP	AL,4
+	JNC	.next
+	MOV	BH,0x01
+	XOR	BL,BL
+	PUSH	BX
+	RET
+.ctrl:	PUSH	DX;2072
+	MOV	DL,127
+	MOV	AL,0xFD
+	PUSH	BIOS.PortIO
+	XCHG	IP,[SP]
+	POP	DX
+	PUSH	BX
+	DEC	BL
+	CMP	AL,0x08
+	JZ	..go
+	INC	BL
+	INC	BL
+	CMP	AL,0x18
+	JZ	..go
+	DEC	BL
+	CMP	AL,0x19
+	JNZ	..rest
+	ADD	BH,BH
+	PUSH	AX
+	ADD	BH,0x40
+	POP	AX
+	ROR	BH
+..go:	CMP	AL,AL
+	PUSH	BX
+	PUSH	DX
+	PUSH	CX
+	PUSH	.figures
+	XCHG	IP,[SP]
+	POP	CX
+	POP	DX
+	POP	BX
+	JNZ	..rest
+	XCHG	BX,[SP]
+..rest:	POP	BX
+	RET
+	; BH=Y, BL=X, DX=Shape, CF=0:Test/1:Draw
+	; BH>>5 - Angle / Flip
+.figures:SBB	AL,AL
+	AND	AL,0x40
+	OR	BL,AL
+	MOV	AL,BH
+	ADD	AL,AL
+	AND	AL,0xC0
+	XOR	AL,BH
+	XCHG	AL,BH
+	AND	AL,0x40
+	CMP	AL,0x40
+	SBB	AL,AL
+	ADD	AL,AL
+	ADD	BL,AL
+	MOV	AL,BH
+	AND	AL,0x80
+	CMP	AL,0x80
+	SBB	AL,AL
+	ADD	AL,AL
+	ADD	BH,AL
+	MOV	AL,BH
+	AND	AL,0x40
+	CMP	AL,0x40
+	CMC
+	SBB	AL,AL
+	AND	AL,AL
+	CMC
+	ADC	AL,AL
+	MOV	CL,AL
+	MOV	AL,BH
+	AND	AL,0x80
+	CMP	AL,0x80
+	CMC
+	SBB	AL,AL
+	AND	AL,AL
+	CMC
+	ADC	AL,AL
+	MOV	CH,AL
+	MOV	AL,0x05
+..row:	PUSH	AX
+	PUSH	BX
+	MOV	AL,0x03
+..col:	PUSH	AX
+	ADD	DX,DX
+	JNC	..cols
+	MOV	AL,BL
+	AND	AL,0x40
+	PUSH	BX
+	PUSH	AX
+	PUSH	CX
+	AND	BH,0x1F
+	AND	BL,0x3F
+	PUSH	[BP+0x0E]
+	XCHG	IP,[SP]
+	POP	CX
+	POP	AX
+	JNZ	..draw
+	MOV	AL,[BX]
+	CMP	AL,0x30
+	CMC
+	SBB	AL,AL
+	POP	BX
+	JNZ	..exit
+	JZ	..cols
+..draw:	MOV	AL,0x5F
+	XOR	AL,[BX]
+	MOV	[BX],AL
+	POP	BX
+..cols:	MOV	AL,BH
+	AND	AL,0x20
+	JZ	..hor
+	ADD	BH,CH
+	SUB	BL,CL
+..hor:	ADD	BL,CL
+	POP	AX
+	DEC	AL
+	JNZ	..col
+	POP	BX
+	MOV	AL,BH
+	AND	AL,0x20
+	JZ	..ver
+	ADD	BL,CL
+	SUB	BH,CH
+..ver:	ADD	BH,CH
+	POP	AX
+	DEC	AL
+	JNZ	..row
+	RET
+..exit:	POP	BX
+	POP	BX
+	POP	BX
+	RET
+;;;;;;;;;;;;;;;;;;;;;;;;
+	ORG	0x1100
+Xonix:	MOV	BH,0x76
+	MOV	BL,0x50
+	XCHG	BP,BX
+	MOV	CH,1
+	MOV	DH,1
+	MOV	DL,1
+	MOV	BH,0
+	MOV	BL,0
+	LOOP
+	PUSH	[SP+0]
+	PUSH	BX
+	PUSH	CX
+	PUSH	[BP+0xE]
+	XCHG	IP,[SP]
+	MOV	AL,[BX]
+	AND	AL,0x07
+	PUSH	AX
+	MOV	[BX],0x4F
+	MOV	CH,AL
+	LOOP
+	PUSH	[SP+0]
+	DEC	CX
+	MOV	AL,CL
+	OR	AL,CH
+	RNZ	;JNZ	$+1
+	MOV	AL,0
+	CZ	.rap
+	POP	AX
+	POP	AX
+	MOV	[BX],32
+	POP	AX
+	POP	CX
+	OR	CH,AL
+	DEC	CX
+	MOV	AL,CH
+	OR	AL,CL
+	JZ	.game
+	POP	BX
+	ADD	BL,DL
+	CMP	BL,63
+	JC	.hor
+	MOV	AL,BH
+	CNC	.rap
+	PUSH	BX
+	PUSH	CX
+	PUSH	[BP+0xE]
+	XCHG	IP,[SP]
+	MOV	[BX],0x7F
+	POP	CX
+	POP	BX
+.hor:	CMC
+	SBB	AL,AL
+	XOR	DL,AL
+	SUB	DL,AL
+	AND	AL,DL
+	ADD	BL,AL
+	ADD	BH,DH
+	CMP	BH,25
+	RC	;JC	$+1
+	MOV	AL,BL
+	CNC	.rap
+	PUSH	BX
+	PUSH	CX
+	PUSH	[BP+0xE]
+	XCHG	IP,[SP]
+	MOV	[BX],0x7F
+	POP	CX
+	POP	BX
+	NEG	DH
+	ADD	BH,DH
+.next:	RET
+.game:	PUSH	0x2000
+	RET
+.rap:	PUSH	AX
+	PUSH	CX
+	PUSH	DX
+	MOV	DL,0x0A
+	PUSH	BIOS.PortIO
+	XCHG	IP,[SP]
+	POP	DX
+	POP	CX
+	POP	AX
+	RET
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+	ORG	0xF800
+BIOS:	MOV	DH,0x04
+	MOV	DL,0x9A
+	XOR	BH,BH
+	MOV	BL,BH
+	MOV	CL,BL
+	MOV	CH,BH
+	CMC
+	ROR	BH
+	XCHG	SP,BX
+.loop:	PUSH	BX
+	DEC	DX
+	MOV	AL,DH
+	OR	AL,DL
+	JNZ	.loop
+	MOV	CH,0
+.loop:	MOV	CL,0x77
+	PUSH	.beep
+	XCHG	IP,[SP]
+	MOV	CL,0x11
+	PUSH	.beep
+	XCHG	IP,[SP]
+	DEC	CH
+	JNZ	.loop
+	MOV	BH,0xF8
+	MOV	BL,0x00
+	MOV	DH,24
+	LOOP
+	PUSH	[SP+0]
+	PUSH	.PutWord
+	XCHG	IP,[SP]
+	MOV	DL,16
+	LOOP
+	PUSH	[SP+0]
+	MOV	AL,0x20
+	PUSH	.PutC_A
+	XCHG	IP,[SP]
+	MOV	AL,[BX]
+	PUSH	.PutByte
+	XCHG	IP,[SP]
+	INC	BX
+	DEC	DL
+	RNZ	;JNZ	$+1
+	POP	AX
+	POP	AX
+	MOV	CL,0x0D
+	PUSH	.PutC
+	XCHG	IP,[SP]
+	MOV	CL,0x0A
+	PUSH	.PutC
+	XCHG	IP,[SP]
+	DEC	DH
+	RNZ	;JNZ	$+1
+	POP	AX
+	POP	AX
+	MOV	CH,0
+	MOV	CL,1
+	PUSH	.CPU_In
+	XCHG	IP,[SP]
+	XCHG	BX,DX
+	PUSH	.PutWord
+	XCHG	IP,[SP]
+	XOR	BL,BL
+	MOV	BH,0x11
+	PUSH	BX
+	RET
+	HLT
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;	76D0: Cursor Column [0..99]
+;	76D1: Cursor Row    [0..63]
+;	76D2: Cursor Shape  [
+;	ORG	0xF800
+;BIOS:	MOV	DH,0x
+;;			MOV	DH,0x04
+;	MOV	DL,0x9A
+;	XOR	BH,BH
+;	MOV	CH,BH
+;	MOV	BL,BH
+;	MOV	CL,BH
+;	CMC
+;	ROR	BH
+;	XCHG	SP,BX
+;.loop:	PUSH	BX
+;	DEC	DX
+;	MOV	AL,DL
+;	OR	AL,DH
+;	JNZ	.loop
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; DL = Port Index[7F:PortIn]
+; AL = Data
+.PortIO:PUSH	DX
+	CMP	DL,128
+	SBB	DH,DH
+	ADD	DL,129
+	JZ	..input
+	XCHG	SP,DX
+	DEC	SP
+	JNS	..lower
+	INC	SP
+	MOV	[SP+127],AL
+	JS	..ready
+..lower:MOV	[SP+128],AL
+	JNS	..ready
+..input:CMP	AL,128
+	SBB	DH,DH
+	ADD	AL,129
+	MOV	DL,AL
+	XCHG	SP,DX
+	JZ	..ready
+	JS	..higher
+	DEC	SP
+	MOV	AL,[SP+128]
+	JNS	..ready
+..higher:MOV	AL,[SP+127]
+..ready:XCHG	SP,DX
+	POP	DX
+	RET
+;;;;;;;;;;;;;;;;;;;;;;;;;;;
+; CX - Register Index
+; DX - Register Data
+.CPU_In:PUSH	CX
+	PUSH	BX
+	XOR	BH,BH
+	MOV	BL,BH
+	DEC	BX
+	XCHG	SP,BX
+.loop:	POP	DX
+	DEC	CX
+	MOV	AL,CL
+	OR	AL,CH
+	JNZ	.loop
+	XCHG	SP,BX
+	POP	BX
+	POP	CX
+	RET
+;;;;;;;;;;;;;;;;;;;;;;
+.GetChar:XOR	AL,AL
+..loop:	CZ	.Inkey
+	CMP	AL,0xFF
+	JZ	..loop
+	PUSH	AX
+	PUSH	CX
+	MOV	CL,0x50
+	MOV	CH,0x60
+	XOR	AL,AL
+	CZ	.beep
+	POP	CX
+	POP	AX
+	RET
+.Inkey:	PUSH	DX
+	MOV	DL,127
+	MOV	AL,0xFD
+	PUSH	BIOS.PortIO
+	XCHG	IP,[SP]
+	POP	DX
+	RET
+.beep:	PUSH	DX
+	MOV	DL,0x0A
+	MOV	AL,CL
+	PUSH	.PortIO
+	XCHG	IP,[SP]
+	MOV	AL,CH
+..loop:	DEC	AL
+	JNZ	..loop
+	PUSH	.PortIO
+	XCHG	IP,[SP]
+	POP	DX
+	RET
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+	ORG	0xFC9E
+.PutWord:MOV	AL,BH
+	CMP	AL,AL
+	CNC	.PutByte
+	MOV	AL,BL
+	ORG	0xFCA3
+.PutByte:PUSH	AX
+	RAR	AL
+	RAR	AL
+	RAR	AL
+	RAR	AL
+	CMP	AL,AL
+	CNC	..nibble
+	POP	AX
+..nibble:AND	AL,0x0F
+	CMP	AL,0x0A
+	CMC
+	SBB	CL,CL
+	AND	CL,0x07
+	ADD	AL,0x30
+	ADD	AL,CL
+	ORG	0xFCB9
+.PutC_A:MOV	CL,AL
+.PutC:	PUSH	DX
+	PUSH	CX
+	PUSH	BX
+	PUSH	AX
+	PUSH	BP
+	PUSH	[BP+0x64]
+	POP	BP
+	MOV	CH,[BP+0x0]
+	AND	CH,CH
+	CNC	..main
+	PUSH	BX
+	POP	[BP+0x4]
+	PUSH	[BP+0x8]
+	POP	DX
+	ADD	BX,DX
+	PUSH	[BP+0xC];3
+	POP	DX;1
+	DEC	AL;1
+	DEC	DX;1
+	XCHG	BX,DX	;2
+	MOV	AL,DL	;2
+..exit:	MOV	[BX],AL	;1
+	DEC	BX	;1
+	MOV	[BX],DH	;1
+..leave:MOV	AL,CH
+..ready:MOV	[BP+0x0],AL
+	POP	BP
+	POP	AX
+	POP	BX
+	POP	CX
+	POP	DX
+	RET
+..main:	PUSH	[BP+0x4]
+	POP	BX
+	PUSH	[BP+0x6]
+	POP	DX
+	JNZ	..ansi
+	MOV	AL,CL
+	CMP	AL,0x1B
+	JNZ	..out
+	MOV	[BP-1],CH
+	DEC	CH
+	RET
+..left:	DEC	BL
+	JNS	$+1
+	MOV	BL,DL
+	DEC	BL
+..up:	DEC	BH
+	JNS	$+1
+	MOV	BH,DH
+	DEC	BH
+	RET
+..right:INC	BL
+	CMP	BL,DL
+	JC	$+1
+	XOR	BL,BL
+..down:	INC	BH
+	CMP	BH,DH
+	JC	$+1
+	XOR	BH,BH
+	RET
+..clrscr:XOR	AL,AL
+	MOV	BH,AL
+	MOV	BL,AL
+	CMP	AL,CL
+	MOV	CL,AL
+...loop:CNZ	..put
+	JNZ	...loop
+	DEC	DL
+..home:	XOR	BH,BH
+..return:MOV	AL,0x20
+..set_x:SUB	AL,0x20
+...loop:MOV	BL,AL
+	SUB	AL,DL
+	JNC	...loop
+	XOR	CH,CH
+	RET
+..quit:	JZ	..exit
+..out:	CMP	AL,0x0A
+	JZ	..scroll
+	CMP	AL,0x0D
+	JZ	..return
+	CMP	AL,0x08
+	JZ	..left
+	CMP	AL,0x18
+	JZ	..right
+	CMP	AL,0x19
+	JZ	..up
+	CMP	AL,0x1A
+	JZ	..down
+	CMP	AL,0x0C
+	JZ	..home
+	PUSH	[BP+0x12]
+	RET
+..clear:JZ	..clrscr
+..put:	PUSH	BX
+	PUSH	CX
+	PUSH	[BP+0xE]
+	XCHG	IP,[SP]
+	POP	CX
+	MOV	AL,[BP+0x3]
+	ADD	AL,CL
+	MOV	[BX],AL
+	POP	BX
+	INC	BL
+..tab:	CMP	BL,DL
+	JC	$+1
+	XOR	BL,BL
+..scroll:INC	BH
+	CMP	BH,DH
+	JC	$+1
+	MOV	BH,DH
+	DEC	BH
+	PUSH	BX
+	XOR	BL,BL
+	PUSH	BX
+	PUSH	[BP+0xE]
+	XCHG	IP,[SP]
+	XCHG	BX,[SP]
+	INC	BH
+	PUSH	[BP+0xE]
+	XCHG	IP,[SP]
+	POP	CX
+	SUB	CX,BX
+...cols:PUSH	DX
+	PUSH	BX
+	MOV	AL,[BP+0x3]
+...rows:ADD	BX,CX
+	MOV	DL,AL
+	MOV	AL,[BX]
+	MOV	[BX],DL
+	DEC	DH
+	JNZ	...rows
+	POP	BX
+	POP	DX
+	INC	BX
+	DEC	DL
+	JNZ	...cols
+	POP	BX
+	MOV	CH,DL
+	RET
+..ansi:	MOV	AL,CL
+	CMP	CH,0xF3
+	JNC	..code
+	DEC	CH
+	CMP	CH,0xF0
+	JZ	..set_x
+	JNC	..set_y
+	INC	CH
+	PUSH	[BP+0xE]
+	RET
+..code:	MOV	AL,CL
+	CMP	AL,0x3A
+	JNC	...call
+	SUB	AL,0x30
+	JC	...call
+	MOV	CL,AL
+	POP	AX
+	MOV	BL,CH
+	XOR	BH,BH
+	ADD	BX,BP
+	MOV	AL,[BX]
+	ADD	AL,AL
+	ADD	AL,AL
+	ADD	AL,[BX]
+	ADD	AL,AL
+	ADD	AL,CL
+	XOR	DH,DH
+	JZ	..quit
+..outstd:CMP	CL,0x1F
+	JZ	..clear
+	PUSH	..put
+	RET
+..set_y:SUB	AL,0x20
+...loop:MOV	BH,AL
+	SUB	AL,DH
+	JNC	...loop
+	RET
+...call:PUSH	[BP+0x10]
+	XCHG	IP,[SP]
+	PUSH	[BP+0x4]
+	POP	BX
+	RET
+...std:	MOV	CH,0xF2
+	CMP	AL,0x59
+	JZ	$+1
+	XOR	CH,CH
+	RET
+..mul78:PUSH	[BP+0x8]
+	POP	CX
+	ADD	BX,CX
+	MOV	AL,BL
+	MOV	BL,BH
+	XOR	BH,BH
+	ADD	BX,BX
+	MOV	CH,BH
+	MOV	CL,BL
+	ADD	BX,BX
+	ADD	BX,BX
+	ADD	BX,CX
+	ADD	BX,BX
+	ADD	BX,BX
+	ADD	BX,BX
+	SUB	BX,CX
+	XOR	CH,CH
+	MOV	CL,AL
+	ADD	BX,CX
+	PUSH	[BP+0xC]
+	POP	CX
+	MOV [CX-2],BL
+	MOV [CX-1],BH
+	ADD	BX,CX
+	RET
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+	ORG	0x765C
+	DW	0x76D0
+	DW	BIOS.PutC.mul78
+	DW	BIOS.PutC.OutStd.std
+	DW	BIOS.PutC.OutStd
+	DW	0x7650
+</textarea>
+<table><tr valign=top>
+<td colspan='2'><pre id='commands'></pre></td>
+<td rowspan='2'><pre id='listing'
+alt='.0 .1 .2 .3 .4 .5 .6 .7 .8 .9 .A .B .C .D .E .F'>
+;    Seq   Blank  X  Y SX SY PX PY BELL SCREEN Mul78
+7650:00 00 00 00 00 00 41 19 08 03 F0 05 D0 76 E7 FD
+;       Val   Page
+7660:DE FD CC FD 50 76
+;  ansistd outstd
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+</pre>
+<button onclick='speed=1000'>1</button>
+<button onclick='speed=500'>2</button>
+<button onclick='speed=100'>10</button>
+<button onclick='speed=10'>100</button> op/sec<br />
+<button onclick='reset=90; clearTimeout(Reset); Reset = setInterval('window.location.reload()', reset * 1000);'>1:30</button>
+<button onclick='reset=60; clearTimeout(Reset); Reset = setInterval('window.location.reload()', reset * 1000);'>1:00</button>
+<button onclick='reset=30; clearTimeout(Reset); Reset = setInterval('window.location.reload()', reset * 1000);'>0:30</button>
+<button onclick='reset=10; clearTimeout(Reset); Reset = setInterval('window.location.reload()', reset * 1000);'>0:10</button> to reset<br />
+<button onclick='cycle=8'>x8</button>
+<button onclick='cycle=4'>x4</button>
+<button onclick='cycle=2'>x2</button>
+<button onclick='cycle=1'>x1</button> multiply<br />
+<button onclick='cycle=65536'>x65536</button>
+<button onclick='cycle=8192'>x8192</button>
+<button onclick='cycle=256'>x256</button>
+<button onclick='cycle=64'>x64</button> multiply<br />
+<input id='DebugAddr' onblur='cpu.DR=parseInt(this.value,16); clearTimeout(Reset); this.focus()' style=width:5em value='F800' />
+<button onclick='clearTimeout(Reset); cpu.DR = -1, cpu.do_tick()'>Step</button><br />
+<button onclick='window.location.href = window.location.href.indexOf("?speed=") < 0 ? "?speed=" + speed + "&reset=" + reset + "&cycle=" + cycle +"&debug=" + cpu.DR.Hex(4) : window.location.href.replace(/(?:speed=)([0-9]+)/, "speed=" + speed).replace(/(?:reset=)([0-9]+)/, "reset=" + reset).replace(/(?:cycle=)([0-9]+)/, "cycle=" + cycle).replace(/(?:debug=)([0-9A-Fa-f]+)/, "debug=" + cpu.DR.Hex(4))'>Fixing</button>
+</td>
+</tr>
+<tr valign='top'><td><pre id='Screen'></pre></td>
+<td>
+<textarea id='Logger'rows='29'cols='50'>
+Intuitive clear mnemonic is quickly memorizes:
+|Range|Key|Description
+  00  :Nil-Null queue of instructions line / HLT;
+  80  :128-The negate -128 is returns -128 / NOP;
+xA..xB:A/B-Add / Subtract;
+xC..xD:C/D-Conjunction/Disjunction;
+  xE  : E -Exclusive OR;
+A0..A7: A -Access to bytes;
+A8..AF:A/A-Access to ALU;
+B0..B7: B -Branches to functions;
+B8..BF:B/F-Branches by flags;
+C0..CB: C -Increment;
+  CF  :C/F-Complement for Carry Flag;
+D0..DB: D -Decrement;
+  DF  :D/F-Data Formation;
+  EF  :E/F-Each Feed / Loop;
+F0..F7:F/x-Functions;
+  FE  :F/E-Function Execute / CALL [SP];
+  FF  :F/F-Finalize the Function / RET.
+Simplest protection from errors and fool code:
+Examples|Macros||Codes|Description 
+BE FF   |RZ    ||B2 FE|Microcode#4 
+BF FF   |RNZ   ||B2 FF|Microcode#5 
+BE FE   |REPZ  ||B3 FE|Microcode#6-
+BF FE   |REPNZ ||B6 FF|Microcode#14
+CF BC FD|CLC   ||B7 FE|Microcode#15
+CF BD FD|STC   ||B7 FF|Microcode#16
+</textarea>
+</td>
+</tr></table>
+<!--
+i8275 CRT-Controller: Simply version
+00000000.-----: 
+000000nn.00-03: 
+000001nn.00-03: 
+00001nnn.00-07: 
+0001nnnn.00-15: 
+0010nnnn.00-15: 
+0100nnnn.00-15: 
+01nnnnnn.16-63: 
+1000nnnn.00-15: Lines [1..16]-1
+1nnnnnnn.16-79: Cols [16..80]-1
+11nnnnnn.16-63: Rows [16..64]-1
+===
+80..8F: Set Lines [1..16]
+90..CF: Set Cols [16..80]
+D0..FF: Set Rows [16..64]
+===
+Con[0..1]: Cursor State
+0000..13FF: Cursor Location
+8xxx      : Characters 80..FF Show/Hide/Flash
+4xxx      : 
+2xxx      : 
+
+=== PORTS ===
+SP:0000
+[SP-1]  =FFFF -> Port $FF
+[SP-128]=FF80 -> Port $80
+SP:FFFF
+[SP+1]  =0000 -> Port $00
+[SP+127]=007E -> Port $7E
+;;;;;;;;
+; DL = Port Index[7F:PortIn]
+; AL = Data
+PortIO:	PUSH	DX
+	CMP	DL,128
+	SBB	DH,DH
+	ADD	DL,129
+	JZ	.input
+	XCHG	SP,DX
+	JNS	.lower
+	MOV	[SP+127],AL
+	JS	.ready
+.lower:	MOV	[SP-128],AL
+	JNS	.ready
+.input:	CMP	AL,128
+	SBB	DH,DH
+	ADD	AL,129
+	MOV	DL,AL
+	JZ	.ready
+	XCHG	SP,DX
+	JS	.higher
+	MOV	AL,[SP-128]
+	JNS	.ready
+.higher:MOV	AL,[SP+127]
+.ready:	XCHG	SP,DX
+	POP	DX
+	RET
+;;;;;;;;;;;;;;;;;;;;;;;;;
+Port #253 #0xFD #-3	: Keyboard Code
+;;;;;;;;;;;;;;;;;;;;;;;;;
+x0 x1 x2 x3 x4 x5 x6 x7
+-- BP SI DI SP BX CX DX
+
+55 76 -> PREFIX BX + MOV CL,DL   -> PREFIX BX + MOV CX,DX -> LEA BX,[CX+DX]
+55 21 -> PREFIX BX + MOV BH,CH   -> PREFIX BX + MOV BP,SI -> LEA BX,[BP+SI]
+55 10 -> PREFIX BX + MOV [BX],BH -> PREFIX BX + MOV XX,BP -> LEA BX,[[SP]+BP]
+
+/////////////////////////////////////////////////////////////////////////////
+Service Registers:
+==================
+1. Select the service segment:
+1.1. Set SP to 0x0001
+1.2. Set APR (one of BX,CX,DX) to wanted index
+1.3. Do PUSH instruction of this APR
+2. Select the service register:
+2.1. Set SP to 0x0000
+2.2. Set AL to wanted index
+2.3. Do PUSH AX
+2.4. If wanted index greater than 256, repeat the step #2.3 many times
+3. Write to service register:
+3.1. Set SP to 0x0000
+3.2. Do PUSH instruction with any of APR (BX,CX,DX)
+4. Read the service register:
+4.1. Set SP to 0xFFFF
+4.2. Do POP instruction with any of APR (BX,CX,DX)
+
+-F80..-FFF: Service Layer #1
+0000..00FF: Service Layer #0
+0100..01FF: 6502-Stack Mode
+0200..FDFF: Regular Stack
+FE00..FEFF: Service Layer #2
+FF00..FFFF: Service Layer #3
++000..+07E: Service Layer #1
+
+00000000XXXXXXXX: Service Layer #0
+00000001XXXXXXXX: 6502-Stack Layer
+XXXXXXXXXXXXXXXX: Regular Stack Layer
+11111110XXXXXXXX: Service Layer #2
+11111111XXXXXXXX: Service Layer #3
+-->
+</body>
