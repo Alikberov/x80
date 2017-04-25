@@ -440,16 +440,16 @@ function getCharacterOffsetWithin(range, node) {
 				if(width)
 					data = (data << 8) + m[ip + width];
 			}
-			info["#"] += ".".repeat(16);
-			info["$"] = act.command + " ".repeat(_cmd);
-			info["%"] = act.operand.replace(/_+(\d)/g, function(s, n) { return data.toHex(-n * 2); }) + " ".repeat(_opr);
+			info["#"] += ".".x(16);
+			info["$"] = act.command + " ".x(_cmd);
+			info["%"] = act.operand.replace(/_+(\d)/g, function(s, n) { return data.toHex(-n * 2); }) + " ".x(_opr);
 			if(debug.labels[ip])
-				info["."] = debug.labels[ip] + " ".repeat(_rem);
+				info["."] = debug.labels[ip] + " ".x(_rem);
 			else
 			if(debug.labels[data])
-				info["."] = debug.labels[data] + " ".repeat(_rem);
+				info["."] = debug.labels[data] + " ".x(_rem);
 			else
-				info["."] = act.remark + " ".repeat(_rem);
+				info["."] = act.remark + " ".x(_rem);
 			asm = debug.string.replace(/([@#$%.])/g, function(id) {
 				var	s = info[id].charAt(0);
 				info[id] = info[id].substr(1);
