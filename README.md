@@ -54,33 +54,42 @@ Let's try it!
 FF: RET - Other Final, since 0xFF is rare code and finally of ordinary numbers.
 ```
 :repeat_one: Representation for i8080-rudiment:
+
 ```
    ┌─►RET         Example:
 Bx FF:Jcond $+1─┐ 1.RZ
 ┌──┘┌►Rcond     │ 2.RNZ
 └───┴───────────┘ 3.RPO
 ```
+
 :repeat: Representation for x86-rudiment:
+
 ```
 Bx FE:Jcond $+0─┐ 1.REPZ
 ↑ ┌►REPcond     │ 2.REPNZ
 └─┴─────────────┘ 3.REPPO
 ```
+
 :repeat_one: Representation for internal functions as hollow calls:
+
 ```
    ┌─►RET         Example:
 Bx FF:Ccond $+1─┐ 1.DAA
 ┌──┘┌► «Other»  │ 2.CLI/STI
 └───┴───────────┘ 3.CPUID
 ```
+
 :repeat: Representation for complex functions as overflow calls:
+
 ```
 Bx FE:Ccond $+0─┐ 1.WAIT
 ↑ ┌► «Complex»  │ 2.MUL/DIV
 └─┴─────────────┘ 3.MOVS/CMPS
 ```
+
 <hr />
 Many of [:page_facing_up: Instructions Codes](http://htmlpreview.github.com/?http://github.com/Alikberov/x80/blob/master/emulator.html?instructions) aligned for maximal intuitive clear remembering:
+
 ```
 Ax: Assign to registers / ALU-operations;
 Bx: Branches by conditions;
@@ -90,6 +99,7 @@ Fx: Functions.
 ```
 
 :heavy_check_mark: Suitable solvings (for remembering):
+
 ```
 AA: ALU - Adding          (ADD);
 AC: ALU - Conjunction     (AND);
@@ -114,7 +124,9 @@ EF: Envelope for Function (LOOP);
 F0..F7: Function #n       (INT n);
 FF: Function's Finish     (RET);
 ```
+
 :grey_question: Experimental solves:
+
 ```
    ┌──┬──┬──┬──┬──┬──┬──┬──┐
 AH:│??│??│TF│WF│PF│SF│CF│ZF│
@@ -126,12 +138,16 @@ Bit 2:Signed(n - 2n = -n);
 Bit 4:Word  (1<<4 = 16 bits mode);
 Bit 5:Trace (1<<5 = Thirty two);
 ```
+
 :grey_question: System сode particularity:
+
 ```
 00: Prefix SS (not HLT);
 ```
+
 ### Shifted ALU
 Instruction set allow to do reverse ALU-operations with accumulator (SUB,SBB,CMP):
+
 ```
    5B   |SUB AL,BL   ; AL = AL - BL
    AB 7F|SUB AL,0x7F ; AL = AL - 0x7F
@@ -147,7 +163,9 @@ Instruction set allow to do reverse ALU-operations with accumulator (SUB,SBB,CMP
 44 5F   |CMP BL      ; Test(BL - AL)
 44 AF 7F|CMP 0x7F    ; Test(0x7F - AL)
 ```
+
 Since other reverse operations is nonsense (ADD,ADC,AND,OR,XOR), it working like comparators:
+
 ```
    5C   |AND AL,BL   ; AL = AL & BL
    AC 7F|AND AL,0x7F ; AL = AL & 0x7F
@@ -156,19 +174,24 @@ Since other reverse operations is nonsense (ADD,ADC,AND,OR,XOR), it working like
 44 5C   |AND BL      ; Test(BL & AL)
 44 AC 7F|AND 0x7F    ; Test(0x7F & AL)
 ```
+
 <hr />
+
 ## System Tricks
 ### In/Out ports
 All relative access by index pointers, where effective vector are escaped the 64K-bound, will processes like the in/out-ports.
+
 ```
         MOV  AL,[SP-1] ; Equal IN AL,255 if SP is 0x0000
         MOV  [SP+1],AL ; Equal OUT 1,AL if SP is 0xFFFF
 ```
+
 ### Processors System Control
 Processor haven't special instructions to control for inner states of unit.
 All PUSH/POP instructions provides access to internal register, when stack pointer aligned to bound of memory.
 When the SP sets in NULL or 0FFFFh, the PUSH/POP-instructions working without RAM, but with internal services registers of processor unit (debug register, task-context register, i8080-/z80-emulation).
 As a rule, supervisors process must to control this actions from applications and stop it any or making self.
+
 ```
 	PUSH DX ; If SP is 0x0000, DX are writing to service registers
 	PUSH AX ; Skip current service register
@@ -176,5 +199,6 @@ As a rule, supervisors process must to control this actions from applications an
 	POP  AX ; Skip current service register
 	PUSH CX ; If SP is 0x0001, CX has indexing the page of service
 ```
+
 Particulary, this is different way for access to in/out ports.
 In case, when services page included the hexadecimal capital ("A".."F"), it are disabled for application code as system page.
