@@ -5269,7 +5269,7 @@ Help:
 	DB	"\n[Y]AMP - Y-AMPLITUDE\r"
 	DB	"\n[Z]ERO - CLEAR MEMORY\0"
 	ORG	0xF800
-BIOS:	MOV!	BH,0x76
+BIOS:	MOV	BH,0x76
 	MOV	BL,0xCE
 	XCHG	SP,BX
 	PUSH	0x7600
@@ -5296,7 +5296,7 @@ BIOS:	MOV!	BH,0x76
 	MOV	DH,0xFF
 	HLT	DH
 	MOV	DL,0xDB
-	MOV!	AL,0x00
+	MOV	AL,0x00
 	OUT	DL,AL
 	IN	DL
 	PUSH	.OutDec
@@ -5355,7 +5355,7 @@ BIOS:	MOV!	BH,0x76
 	BIE	.prompt
 	CMP	AL,0x7F
 	BIF	..next
-	NOT!	CH
+	NOT	CH
 	OR	CH,CL
 	NOT	CH
 	RAR	CL
@@ -5417,7 +5417,7 @@ BIOS:	MOV!	BH,0x76
 	PUSH	0x76D0
 	PUSH	0x78FF
 	POP	DX,BX
-	PUSH! .HexDmp
+	PUSH .HexDmp
 	XCHG IP,[SP]
 	PUSH .hello
 	POP BX
@@ -5458,7 +5458,7 @@ BIOS:	MOV!	BH,0x76
 	PUSH	.PutPtr
 	XCHG	IP,[SP]
 	JMP	.loopy
-.stop:	PUSH?	BIOS.API.fn
+.stop:	PUSH	BIOS.API.fn
 	XCHG	IP,[SP]
 	HLT
 	HLT
@@ -5528,7 +5528,7 @@ BIOS:	MOV!	BH,0x76
 ..none:	INT	72
 	DB	"\n!!! RESERVED DIRECTIVE\0"
 	RET
-..xtra:	XCHG!	SP,BX
+..xtra:	XCHG	SP,BX
 	LOOP	DL
 	PUSH	EX
 	XCHG	SP,BX
@@ -5827,14 +5827,14 @@ BIOS:	MOV!	BH,0x76
 	POP	CX
 	SUB	CX,BX
 	;SKIP	5
-...rows:FIX!	50
+...rows:FIX	50
 	ADD	BX,CX
 	CMC
 	MOV	DL,AL
 	MOV	AL,[BX]
 	MOV	[BX],DL
 	HLT	2
-	CMC!
+	CMC
 	;INT	50
 ;	DEC	DH
 ;	JNZ	...rows
@@ -6045,7 +6045,7 @@ BIOS:	MOV!	BH,0x76
 	MOV	AL,0x00
 	CALL	.OutByte
 	MOV	AL,0xD3
-	CALL!	.Output
+	CALL	.Output
 	CALL	.WaitIn
 ..loop:	PUSH	AX
 	INT	72
@@ -6083,7 +6083,7 @@ BIOS:	MOV!	BH,0x76
 	SUB	AL,AL
 	HLT	CL
 	WAIT
-..input:MOV!	AL,[BP+0]
+..input:MOV	AL,[BP+0]
 	ADD	CL,0xFF
 	XCHG	BP,BX
 	POP	CX,BX
@@ -6105,7 +6105,7 @@ BIOS:	MOV!	BH,0x76
 	MOV	AL,0x7F
 	MOV	DL,0xFD
 	MOV	DH,0x80
-	HLT!	DH
+	HLT	DH
 	IN	DL
 	MOV	AL,DL
 ;;;;;;;	PUSH	BIOS.WaitIn
@@ -6205,7 +6205,7 @@ KERN:	MOV	[0],AL
 .acclaim:
 .buffer:
 .error:
-.force:	PUSH!	BX,AX
+.force:	PUSH	BX,AX
 	MOV	BH,0x7F
 	MOV	BL,0xEE
 	MOV	AL,[BX]
