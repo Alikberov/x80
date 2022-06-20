@@ -8,7 +8,7 @@ The story of tries to build a processor that has intuitive clear instruction set
   - [x] i8080 particulary support by commands (compactness, methods, simplicity)
   - [x] i8086 particulary support by assembly (flexibility, pointers, registers)
   - [ ] i8080/i8086/z80 directly binary support is not provided by this project
-- [x] [Try :arrow_forward:](http://htmlpreview.github.com/?https://github.com/Alikberov/x80/blob/master/emulator.html?speed=10&reset=1000&cycle=1024&debug=FFFF) online demo code
+- [x] [Try :arrow_forward:](https://htmlpreview.github.io/?https://github.com/Alikberov/x80/blob/master/emulator.html?speed=10&reset=1000&cycle=1024&debug=FFFF) online demo code
 
 #### Main plan
 - [x] CPU-182:
