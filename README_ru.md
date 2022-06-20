@@ -8,7 +8,7 @@
   - [x] i8080 частичная совместимость по командам (краткость, методы, простота)
   - [x] i8086 частичная совместимость по ассемблеру (гибкость, указатели, регистры)
   - [ ] i8080/i8086/z80 совместимость по машинному коду напрямую не предусматривается
-- [x] [Запустить :arrow_forward:](http://htmlpreview.github.com/?https://github.com/Alikberov/x80/blob/master/emulator.html?speed=10&reset=1000&cycle=1024&debug=FFFF) демонстрацию в браузере
+- [x] [Запустить :arrow_forward:](https://htmlpreview.github.io/?https://github.com/Alikberov/x80/blob/master/emulator.html?speed=10&reset=1000&cycle=1024&debug=FFFF) демонстрацию в браузере
 
 #### Основной план
 - [x] CPU-182:
